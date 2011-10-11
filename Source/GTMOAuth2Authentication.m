@@ -50,6 +50,7 @@ static NSString *const kRefreshFetchArgsKey = @"requestArgs";
 @interface GTMOAuth2ParserClass : NSObject
 // just enough of SBJSON to be able to parse
 - (id)objectWithString:(NSString*)repr error:(NSError**)error;
+- (id)objectWithString:(NSString*)repr;
 @end
 
 // wrapper class for requests needing authorization and their callbacks
@@ -315,7 +316,11 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
       NSString *jsonStr = [[[NSString alloc] initWithData:data
                                                  encoding:NSUTF8StringEncoding] autorelease];
       if (jsonStr) {
-        obj = [parser objectWithString:jsonStr error:&error];
+        if ([parser respondsToSelector:@selector(objectWithString:error:)]) {
+            obj = [parser objectWithString:jsonStr error:&error];
+        } else {
+            obj = [parser objectWithString:jsonStr];
+        }
 #if DEBUG
         if (error) {
           NSLog(@"%@ error %@ parsing %@", NSStringFromClass(jsonParseClass),
