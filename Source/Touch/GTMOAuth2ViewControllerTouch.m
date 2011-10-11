@@ -20,7 +20,7 @@
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 
-#if GTM_INCLUDE_OAUTH2 || (!GTL_REQUIRE_SERVICE_INCLUDES && !GDATA_REQUIRE_SERVICE_INCLUDES)
+#if GTM_INCLUDE_OAUTH2 || !GDATA_REQUIRE_SERVICE_INCLUDES
 
 #if TARGET_OS_IPHONE
 
@@ -64,6 +64,21 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
             userData = userData_,
             properties = properties_;
 
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
++ (id)controllerWithScope:(NSString *)scope
+                 clientID:(NSString *)clientID
+             clientSecret:(NSString *)clientSecret
+         keychainItemName:(NSString *)keychainItemName
+                 delegate:(id)delegate
+         finishedSelector:(SEL)finishedSelector {
+  return [[[self alloc] initWithScope:scope
+                             clientID:clientID
+                         clientSecret:clientSecret
+                     keychainItemName:keychainItemName
+                             delegate:delegate
+                     finishedSelector:finishedSelector] autorelease];
+}
+
 - (id)initWithScope:(NSString *)scope
            clientID:(NSString *)clientID
        clientSecret:(NSString *)clientSecret
@@ -72,11 +87,13 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
    finishedSelector:(SEL)finishedSelector {
   // convenient entry point for Google authentication
 
+  Class signInClass = [[self class] signInClass];
+
   GTMOAuth2Authentication *auth;
-  auth = [GTMOAuth2SignIn standardGoogleAuthenticationForScope:scope
-                                                      clientID:clientID
-                                                  clientSecret:clientSecret];
-  NSURL *authorizationURL = [GTMOAuth2SignIn googleAuthorizationURL];
+  auth = [signInClass standardGoogleAuthenticationForScope:scope
+                                                  clientID:clientID
+                                              clientSecret:clientSecret];
+  NSURL *authorizationURL = [signInClass googleAuthorizationURL];
   return [self initWithAuthentication:auth
                      authorizationURL:authorizationURL
                      keychainItemName:keychainItemName
@@ -86,6 +103,18 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
 
 #if NS_BLOCKS_AVAILABLE
 
++ (id)controllerWithScope:(NSString *)scope
+                 clientID:(NSString *)clientID
+             clientSecret:(NSString *)clientSecret
+         keychainItemName:(NSString *)keychainItemName
+        completionHandler:(void (^)(GTMOAuth2ViewControllerTouch *viewController, GTMOAuth2Authentication *auth, NSError *error))handler {
+  return [[[self alloc] initWithScope:scope
+                             clientID:clientID
+                         clientSecret:clientSecret
+                     keychainItemName:keychainItemName
+                    completionHandler:handler] autorelease];
+}
+
 - (id)initWithScope:(NSString *)scope
            clientID:(NSString *)clientID
        clientSecret:(NSString *)clientSecret
@@ -93,11 +122,13 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
   completionHandler:(void (^)(GTMOAuth2ViewControllerTouch *viewController, GTMOAuth2Authentication *auth, NSError *error))handler {
   // convenient entry point for Google authentication
 
+  Class signInClass = [[self class] signInClass];
+
   GTMOAuth2Authentication *auth;
-  auth = [GTMOAuth2SignIn standardGoogleAuthenticationForScope:scope
-                                                      clientID:clientID
-                                                  clientSecret:clientSecret];
-  NSURL *authorizationURL = [GTMOAuth2SignIn googleAuthorizationURL];
+  auth = [signInClass standardGoogleAuthenticationForScope:scope
+                                                  clientID:clientID
+                                              clientSecret:clientSecret];
+  NSURL *authorizationURL = [signInClass googleAuthorizationURL];
   self = [self initWithAuthentication:auth
                      authorizationURL:authorizationURL
                      keychainItemName:keychainItemName
@@ -109,7 +140,20 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
   return self;
 }
 
-#endif
+#endif // NS_BLOCKS_AVAILABLE
+#endif // !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
+
++ (id)controllerWithAuthentication:(GTMOAuth2Authentication *)auth
+                  authorizationURL:(NSURL *)authorizationURL
+                  keychainItemName:(NSString *)keychainItemName
+                          delegate:(id)delegate
+                  finishedSelector:(SEL)finishedSelector {
+  return [[[self alloc] initWithAuthentication:auth
+                              authorizationURL:authorizationURL
+                              keychainItemName:keychainItemName
+                                      delegate:delegate
+                              finishedSelector:finishedSelector] autorelease];  
+}
 
 - (id)initWithAuthentication:(GTMOAuth2Authentication *)auth
             authorizationURL:(NSURL *)authorizationURL
@@ -124,12 +168,14 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
     delegate_ = [delegate retain];
     finishedSelector_ = finishedSelector;
 
+    Class signInClass = [[self class] signInClass];
+
     // use the supplied auth and OAuth endpoint URLs
-    signIn_ = [[GTMOAuth2SignIn alloc] initWithAuthentication:auth
-                                             authorizationURL:authorizationURL
-                                                     delegate:self
-                                           webRequestSelector:@selector(signIn:displayRequest:)
-                                             finishedSelector:@selector(signIn:finishedWithAuth:error:)];
+    signIn_ = [[signInClass alloc] initWithAuthentication:auth
+                                         authorizationURL:authorizationURL
+                                                 delegate:self
+                                       webRequestSelector:@selector(signIn:displayRequest:)
+                                         finishedSelector:@selector(signIn:finishedWithAuth:error:)];
     
     // if the user is signing in to a Google service, we'll delete the
     // Google authentication browser cookies upon completion
@@ -138,7 +184,7 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
     // set the browserCookiesURL property explicitly
     NSString *authorizationHost = [signIn_.authorizationURL host];
     if ([authorizationHost isEqual:@"accounts.google.com"]) {
-      NSURL *cookiesURL = [NSURL URLWithString:@"https://www.google.com/accounts"];
+      NSURL *cookiesURL = [NSURL URLWithString:@"https://accounts.google.com/"];
       [self setBrowserCookiesURL:cookiesURL];
     }
 
@@ -148,6 +194,16 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
 }
 
 #if NS_BLOCKS_AVAILABLE
++ (id)controllerWithAuthentication:(GTMOAuth2Authentication *)auth
+                  authorizationURL:(NSURL *)authorizationURL
+                  keychainItemName:(NSString *)keychainItemName
+                 completionHandler:(void (^)(GTMOAuth2ViewControllerTouch *viewController, GTMOAuth2Authentication *auth, NSError *error))handler {
+  return [[[self alloc] initWithAuthentication:auth
+                              authorizationURL:authorizationURL
+                              keychainItemName:keychainItemName
+                             completionHandler:handler] autorelease];
+}
+
 - (id)initWithAuthentication:(GTMOAuth2Authentication *)auth
             authorizationURL:(NSURL *)authorizationURL
             keychainItemName:(NSString *)keychainItemName
@@ -166,6 +222,8 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
 #endif
 
 - (void)dealloc {
+  [webView_ setDelegate:nil];
+
   [backButton_ release];
   [forwardButton_ release];
   [navButtonsView_ release];
@@ -191,11 +249,13 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
   return @"GTMOAuth2ViewTouch";
 }
 
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
 + (GTMOAuth2Authentication *)authForGoogleFromKeychainForName:(NSString *)keychainItemName
                                                      clientID:(NSString *)clientID
                                                  clientSecret:(NSString *)clientSecret {
-  NSURL *tokenURL = [GTMOAuth2SignIn googleTokenURL];
-  NSString *redirectURI = [GTMOAuth2SignIn googleRedirectURI];
+  Class signInClass = [self signInClass];
+  NSURL *tokenURL = [signInClass googleTokenURL];
+  NSString *redirectURI = [signInClass nativeClientRedirectURI];
   
   GTMOAuth2Authentication *auth;
   auth = [GTMOAuth2Authentication authenticationWithServiceProvider:kGTMOAuth2ServiceProviderGoogle
@@ -207,6 +267,7 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
                               authentication:auth];
   return auth;
 }
+#endif
 
 + (BOOL)authorizeFromKeychainForName:(NSString *)keychainItemName
                       authentication:(GTMOAuth2Authentication *)newAuth {
@@ -294,6 +355,20 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
   }
 }
 
+- (void)notifyWithName:(NSString *)name
+               webView:(UIWebView *)webView
+                  kind:(NSString *)kind {
+  // Notification for webview load starting and stopping
+  NSDictionary *dict = [NSDictionary dictionaryWithObjectsAndKeys:
+                        webView, kGTMOAuth2WebViewKey,
+                        kind, kGTMOAuth2WebViewStopKindKey, // kind may be nil
+                        nil];
+  NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+  [nc postNotificationName:name
+                    object:self
+                  userInfo:dict];
+}
+
 - (void)cancelSigningIn {
   // The application has explicitly asked us to cancel signing in
   // (so no further callback is required)
@@ -312,11 +387,26 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
   hasDoneFinalRedirect_ = YES;
 }
 
+static Class gSignInClass = Nil;
+
++ (Class)signInClass {
+  if (gSignInClass == Nil) {
+    gSignInClass = [GTMOAuth2SignIn class];
+  }
+  return gSignInClass;
+}
+
++ (void)setSignInClass:(Class)theClass {
+  gSignInClass = theClass;
+}
+
 #pragma mark Token Revocation
 
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
 + (void)revokeTokenForGoogleAuthentication:(GTMOAuth2Authentication *)auth {
   [GTMOAuth2SignIn revokeTokenForGoogleAuthentication:auth];
 }
+#endif
 
 #pragma mark Browser Cookies
 
@@ -402,7 +492,14 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
     if (isDateValid) {
       // Display the request.
       self.request = request;
-      [self.webView loadRequest:[self request]];
+      BOOL shouldWaitForHTML = ([self.initialHTMLString length] > 0);
+      if (shouldWaitForHTML) {
+        [self.webView performSelector:@selector(loadRequest:)
+                           withObject:request
+                           afterDelay:0.05];
+      } else {
+        [self.webView loadRequest:request];
+      }
     } else {
       // clock date is invalid, so signing in would fail with an unhelpful error
       // from the server. Warn the user in an html string showing a watch icon,
@@ -553,19 +650,38 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
 }
 
 - (void)webViewDidStartLoad:(UIWebView *)webView {
+  [self notifyWithName:kGTMOAuth2WebViewStartedLoading
+               webView:webView
+                  kind:nil];
   [self updateUI];
 }
 
 - (void)webViewDidFinishLoad:(UIWebView *)webView {
+  [self notifyWithName:kGTMOAuth2WebViewStoppedLoading
+               webView:webView
+                  kind:kGTMOAuth2WebViewFinished];
+
   NSString *title = [webView stringByEvaluatingJavaScriptFromString:@"document.title"];
   if ([title length] > 0) {
     [signIn_ titleChanged:title];
+  } else {
+#if DEBUG
+    // Verify that Javascript is enabled
+    NSString *result = [webView stringByEvaluatingJavaScriptFromString:@"1+1"];
+    NSAssert([result integerValue] == 2, @"GTMOAuth2: Javascript is required");
+#endif
   }
+
+  [signIn_ cookiesChanged:[NSHTTPCookieStorage sharedHTTPCookieStorage]];
 
   [self updateUI];
 }
 
 - (void)webView:(UIWebView *)webView didFailLoadWithError:(NSError *)error {
+  [self notifyWithName:kGTMOAuth2WebViewStoppedLoading
+               webView:webView
+                  kind:kGTMOAuth2WebViewFailed];
+
   // Tell the sign-in object that a load failed; if it was the authorization
   // URL, it will pop the view and return an error to the delegate.
   if (didViewAppear_) {
@@ -777,4 +893,4 @@ finishedWithAuth:(GTMOAuth2Authentication *)auth
 
 #endif // TARGET_OS_IPHONE
 
-#endif // #if GTM_INCLUDE_OAUTH2 || (!GTL_REQUIRE_SERVICE_INCLUDES && !GDATA_REQUIRE_SERVICE_INCLUDES)
+#endif // #if GTM_INCLUDE_OAUTH2 || !GDATA_REQUIRE_SERVICE_INCLUDES

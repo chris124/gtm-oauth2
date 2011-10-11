@@ -70,6 +70,8 @@ static NSString *const kDailyMotionClientSecretKey = @"DailyMotionClientSecret";
 - (void)awakeFromNib {
   // Listen for network change notifications
   NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+  [nc addObserver:self selector:@selector(incrementNetworkActivity:) name:kGTMOAuth2WebViewStartedLoading object:nil];
+  [nc addObserver:self selector:@selector(decrementNetworkActivity:) name:kGTMOAuth2WebViewStoppedLoading object:nil];
   [nc addObserver:self selector:@selector(incrementNetworkActivity:) name:kGTMOAuth2FetchStarted object:nil];
   [nc addObserver:self selector:@selector(decrementNetworkActivity:) name:kGTMOAuth2FetchStopped object:nil];
   [nc addObserver:self selector:@selector(signInNetworkLostOrFound:) name:kGTMOAuth2NetworkLost  object:nil];
@@ -264,13 +266,13 @@ static NSString *const kDailyMotionClientSecretKey = @"DailyMotionClientSecret";
   SEL finishedSel = @selector(viewController:finishedWithAuth:error:);
 
   GTMOAuth2ViewControllerTouch *viewController;
-  viewController = [[[GTMOAuth2ViewControllerTouch alloc] initWithScope:scope
-                                                               clientID:clientID
-                                                           clientSecret:clientSecret
-                                                       keychainItemName:keychainItemName
-                                                               delegate:self
-                                                       finishedSelector:finishedSel] autorelease];
-
+  viewController = [GTMOAuth2ViewControllerTouch controllerWithScope:scope
+                                                            clientID:clientID
+                                                        clientSecret:clientSecret
+                                                    keychainItemName:keychainItemName
+                                                            delegate:self
+                                                    finishedSelector:finishedSel];
+  
   // You can set the title of the navigationItem of the controller here, if you
   // want.
 
@@ -289,6 +291,16 @@ static NSString *const kDailyMotionClientSecretKey = @"DailyMotionClientSecret";
   NSDictionary *params = [NSDictionary dictionaryWithObject:@"en"
                                                      forKey:@"hl"];
   viewController.signIn.additionalAuthorizationParameters = params;
+
+  // By default, the controller will fetch the user's email, but not the rest of
+  // the user's profile.  The full profile can be requested from Google's server
+  // by setting this property before sign-in:
+  //
+  //   viewController.signIn.shouldFetchGoogleUserProfile = YES;
+  //
+  // The profile will be available after sign-in as
+  //
+  //   NSDictionary *profile = viewController.signIn.userProfile;
 
   // Optional: display some html briefly before the sign-in page loads
   NSString *html = @"<html><body bgcolor=silver><div align=center>Loading sign-in page...</div></body></html>";
@@ -338,13 +350,15 @@ static NSString *const kDailyMotionClientSecretKey = @"DailyMotionClientSecret";
   NSURL *authURL = [NSURL URLWithString:@"https://api.dailymotion.com/oauth/authorize?display=mobile"];
 
   // Display the authentication view
-  GTMOAuth2ViewControllerTouch *viewController;
-  viewController = [[[GTMOAuth2ViewControllerTouch alloc] initWithAuthentication:auth
-                                                                authorizationURL:authURL
-                                                                keychainItemName:keychainItemName
-                                                                        delegate:self
-                                                                finishedSelector:@selector(viewController:finishedWithAuth:error:)] autorelease];
+  SEL sel = @selector(viewController:finishedWithAuth:error:);
 
+  GTMOAuth2ViewControllerTouch *viewController;
+  viewController = [GTMOAuth2ViewControllerTouch controllerWithAuthentication:auth
+                                                             authorizationURL:authURL
+                                                             keychainItemName:keychainItemName
+                                                                     delegate:self
+                                                             finishedSelector:sel];
+  
   // We can set a URL for deleting the cookies after sign-in so the next time
   // the user signs in, the browser does not assume the user is already signed
   // in

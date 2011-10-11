@@ -65,7 +65,7 @@
 // If the network connection is lost for more than 30 seconds while the sign-in
 // html is displayed, the notification kGTLOAuthNetworkLost will be sent.
 
-#if GTM_INCLUDE_OAUTH2 || (!GTL_REQUIRE_SERVICE_INCLUDES && !GDATA_REQUIRE_SERVICE_INCLUDES)
+#if GTM_INCLUDE_OAUTH2 || !GDATA_REQUIRE_SERVICE_INCLUDES
 
 #include <Foundation/Foundation.h>
 
@@ -113,7 +113,9 @@
 #elif !__LP64__
   // placeholders: for 32-bit builds, keep the size of the object's ivar section
   // the same with and without blocks
+#ifndef __clang_analyzer__
   id completionPlaceholder_;
+#endif
 #endif
 
   // flag allowing application to quit during display of sign-in sheet on 10.6
@@ -212,7 +214,7 @@
 
 - (IBAction)closeWindow:(id)sender;
 
-// Init method for authenticating to Google services
+// Create a controller for authenticating to Google services
 //
 // scope is the requested scope of authorization
 //   (like "http://www.google.com/m8/feeds")
@@ -223,16 +225,28 @@
 //   (or set to nil if no persistent keychain storage is desired)
 //
 // resourceBundle may be nil if the window is in the main bundle's nib
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
++ (id)controllerWithScope:(NSString *)scope
+                 clientID:(NSString *)clientID
+             clientSecret:(NSString *)clientSecret
+         keychainItemName:(NSString *)keychainItemName  // may be nil
+           resourceBundle:(NSBundle *)bundle;           // may be nil
+
 - (id)initWithScope:(NSString *)scope
            clientID:(NSString *)clientID
        clientSecret:(NSString *)clientSecret
-   keychainItemName:(NSString *)keychainItemName  // may be nil
-     resourceBundle:(NSBundle *)bundle;           // may be nil
+   keychainItemName:(NSString *)keychainItemName
+     resourceBundle:(NSBundle *)bundle;
+#endif
 
-// Init method for authenticating to non-Google services, taking
+// Create a controller for authenticating to non-Google services, taking
 //   explicit endpoint URLs and an authentication object
-//
-// this is the designated initializer
++ (id)controllerWithAuthentication:(GTMOAuth2Authentication *)auth
+                  authorizationURL:(NSURL *)authorizationURL
+                  keychainItemName:(NSString *)keychainItemName  // may be nil
+                    resourceBundle:(NSBundle *)bundle;           // may be nil
+
+// This is the designated initializer
 - (id)initWithAuthentication:(GTMOAuth2Authentication *)auth
             authorizationURL:(NSURL *)authorizationURL
             keychainItemName:(NSString *)keychainItemName
@@ -273,8 +287,14 @@
 // Subclasses may override authNibName to specify a custom name
 + (NSString *)authNibName;
 
+// apps may replace the sign-in class with their own subclass of it
++ (Class)signInClass;
++ (void)setSignInClass:(Class)theClass;
+
 // Revocation of an authorized token from Google
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
 + (void)revokeTokenForGoogleAuthentication:(GTMOAuth2Authentication *)auth;
+#endif
 
 // Keychain
 //
@@ -285,9 +305,11 @@
 // Create an authentication object for Google services from the access
 // token and secret stored in the keychain; if no token is available, return
 // an unauthorized auth object
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
 + (GTMOAuth2Authentication *)authForGoogleFromKeychainForName:(NSString *)keychainItemName
                                                      clientID:(NSString *)clientID
                                                  clientSecret:(NSString *)clientSecret;
+#endif
 
 // Add tokens from the keychain, if available, to the authentication object
 //
@@ -307,4 +329,4 @@
 
 #endif // #if !TARGET_OS_IPHONE
 
-#endif // #if GTM_INCLUDE_OAUTH2 || (!GTL_REQUIRE_SERVICE_INCLUDES && !GDATA_REQUIRE_SERVICE_INCLUDES)
+#endif // #if GTM_INCLUDE_OAUTH2 || !GDATA_REQUIRE_SERVICE_INCLUDES

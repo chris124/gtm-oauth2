@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-#if GTM_INCLUDE_OAUTH2 || (!GTL_REQUIRE_SERVICE_INCLUDES && !GDATA_REQUIRE_SERVICE_INCLUDES)
+#if GTM_INCLUDE_OAUTH2 || !GDATA_REQUIRE_SERVICE_INCLUDES
 
 #define GTMOAUTH2AUTHENTICATION_DEFINE_GLOBALS 1
 #import "GTMOAuth2Authentication.h"
@@ -50,7 +50,6 @@ static NSString *const kRefreshFetchArgsKey = @"requestArgs";
 @interface GTMOAuth2ParserClass : NSObject
 // just enough of SBJSON to be able to parse
 - (id)objectWithString:(NSString*)repr error:(NSError**)error;
-- (id)objectWithString:(NSString*)repr;
 @end
 
 // wrapper class for requests needing authorization and their callbacks
@@ -146,7 +145,6 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
                 object:(id)obj2
                 object:(id)obj3;
 
-+ (NSString *)encodedOAuthParameterForString:(NSString *)str;
 + (NSString *)unencodedOAuthParameterForString:(NSString *)str;
 + (NSString *)encodedQueryParametersForDictionary:(NSDictionary *)dict;
 
@@ -162,6 +160,7 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
             parameters = parameters_,
             tokenURL = tokenURL_,
             expirationDate = expirationDate_,
+            additionalTokenRequestParameters = additionalTokenRequestParameters_,
             refreshFetcher = refreshFetcher_,
             fetcherService = fetcherService_,
             parserClass = parserClass_,
@@ -231,9 +230,9 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
   [parameters_ release];
   [tokenURL_ release];
   [expirationDate_ release];
+  [additionalTokenRequestParameters_ release];
   [refreshFetcher_ release];
   [authorizationQueue_ release];
-  [fetcherService_ release];
   [userData_ release];
   [properties_ release];
 
@@ -276,11 +275,6 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
   // NSLog(@"keys set ----------------------------\n%@", dict);
 }
 
-- (void)setKeysForResponseData:(NSData *)data {
-  NSDictionary *dict = [[self class] dictionaryWithResponseData:data];
-  [self setKeysForResponseDictionary:dict];
-}
-
 - (void)setKeysForResponseString:(NSString *)str {
   NSDictionary *dict = [[self class] dictionaryWithResponseString:str];
   [self setKeysForResponseDictionary:dict];
@@ -321,11 +315,7 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
       NSString *jsonStr = [[[NSString alloc] initWithData:data
                                                  encoding:NSUTF8StringEncoding] autorelease];
       if (jsonStr) {
-          if ([parser respondsToSelector:@selector(objectWithString:error:)]) {
-              obj = [parser objectWithString:jsonStr error:&error];
-          } else {
-              obj = [parser objectWithString:jsonStr];
-          }
+        obj = [parser objectWithString:jsonStr error:&error];
 #if DEBUG
         if (error) {
           NSLog(@"%@ error %@ parsing %@", NSStringFromClass(jsonParseClass),
@@ -442,6 +432,19 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
       [self authorizeRequestImmediateArgs:args];
     }
   }
+}
+
+- (BOOL)isAuthorizingRequest:(NSURLRequest *)request {
+  BOOL wasFound = NO;
+  @synchronized(authorizationQueue_) {
+    for (GTMOAuth2AuthorizationArgs *args in authorizationQueue_) {
+      if ([args request] == request) {
+        wasFound = YES;
+        break;
+      }
+    }
+  }
+  return wasFound;
 }
 
 - (BOOL)isAuthorizedRequest:(NSURLRequest *)request {
@@ -582,11 +585,11 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
     if (!hasAccessToken) {
       shouldRefresh = YES;
     } else {
-      // We'll consider the token expired if it expires 5 seconds from now
+      // We'll consider the token expired if it expires 60 seconds from now
       // or earlier
       NSDate *expirationDate = self.expirationDate;
       NSTimeInterval timeToExpire = [expirationDate timeIntervalSinceNow];
-      if (expirationDate == nil || timeToExpire < 5.0) {
+      if (expirationDate == nil || timeToExpire < 60.0) {
         // access token has expired, or will in a few seconds
         shouldRefresh = YES;
       }
@@ -645,12 +648,17 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
   } else if (code) {
     // We have a code string
     [paramsDict setObject:@"authorization_code" forKey:@"grant_type"];
-    [paramsDict setObject:self.code forKey:@"code"];
+    [paramsDict setObject:code forKey:@"code"];
 
-    [paramsDict setObject:self.redirectURI forKey:@"redirect_uri"];
+    NSString *redirectURI = self.redirectURI;
+    if ([redirectURI length] > 0) {
+      [paramsDict setObject:redirectURI forKey:@"redirect_uri"];
+    }
 
     NSString *scope = self.scope;
-    if ([scope length] > 0) [paramsDict setObject:scope forKey:@"scope"];
+    if ([scope length] > 0) {
+      [paramsDict setObject:scope forKey:@"scope"];
+    }
 
     fetchType = kGTMOAuth2FetchTypeToken;
     commentTemplate = @"fetch tokens for %@";
@@ -671,6 +679,11 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
     [paramsDict setObject:clientSecret forKey:@"client_secret"];
   }
 
+  NSDictionary *additionalParams = self.additionalTokenRequestParameters;
+  if (additionalParams) {
+    [paramsDict addEntriesFromDictionary:additionalParams];
+  }
+
   NSString *paramStr = [[self class] encodedQueryParametersForDictionary:paramsDict];
   NSData *paramData = [paramStr dataUsingEncoding:NSUTF8StringEncoding];
 
@@ -687,6 +700,9 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
   id <GTMHTTPFetcherServiceProtocol> fetcherService = self.fetcherService;
   if (fetcherService) {
     fetcher = [fetcherService fetcherWithRequest:request];
+
+    // Don't use an authorizer for an auth token fetch
+    fetcher.authorizer = nil;
   } else {
     fetcher = [GTMHTTPFetcher fetcherWithRequest:request];
   }
@@ -727,37 +743,60 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
                error:(NSError *)error {
   [self notifyFetchIsRunning:NO fetcher:fetcher type:nil];
 
+  NSDictionary *responseHeaders = [fetcher responseHeaders];
+  NSString *responseType = [responseHeaders valueForKey:@"Content-Type"];
+  BOOL isResponseJSON = [responseType hasPrefix:@"application/json"];
+  BOOL hasData = ([data length] > 0);
+
   if (error) {
-    // Failed
-    NSDictionary *errorJson = [self dictionaryWithJSONData:data];
-    if ([errorJson count] > 0) {
+    // Failed; if the error body is JSON, parse it and add it to the error's
+    // userInfo dictionary
+    if (hasData) {
+      if (isResponseJSON) {
+        NSDictionary *errorJson = [self dictionaryWithJSONData:data];
+        if ([errorJson count] > 0) {
 #if DEBUG
-      NSLog(@"Error %@\nError data:\n%@", error, errorJson);
+          NSLog(@"Error %@\nError data:\n%@", error, errorJson);
 #endif
-      // Add the JSON error body to the userInfo of the error
-      NSMutableDictionary *userInfo;
-      userInfo = [NSMutableDictionary dictionaryWithObject:errorJson
-                                                    forKey:kGTMOAuth2ErrorJSONKey];
-      NSDictionary *prevUserInfo = [error userInfo];
-      if (prevUserInfo) {
-        [userInfo addEntriesFromDictionary:prevUserInfo];
+          // Add the JSON error body to the userInfo of the error
+          NSMutableDictionary *userInfo;
+          userInfo = [NSMutableDictionary dictionaryWithObject:errorJson
+                                                        forKey:kGTMOAuth2ErrorJSONKey];
+          NSDictionary *prevUserInfo = [error userInfo];
+          if (prevUserInfo) {
+            [userInfo addEntriesFromDictionary:prevUserInfo];
+          }
+          error = [NSError errorWithDomain:[error domain]
+                                      code:[error code]
+                                  userInfo:userInfo];
+        }
       }
-      error = [NSError errorWithDomain:[error domain]
-                                  code:[error code]
-                              userInfo:userInfo];
     }
   } else {
     // Succeeded; we have an access token
-    [self setKeysForResponseJSONData:data];
+#if DEBUG
+    NSAssert(hasData, @"data missing in token response");
+#endif
+
+    if (hasData) {
+      if (isResponseJSON) {
+        [self setKeysForResponseJSONData:data];
+      } else {
+        // Support for legacy token servers that return form-urlencoded data
+        NSString *dataStr = [[[NSString alloc] initWithData:data
+                                                   encoding:NSUTF8StringEncoding] autorelease];
+        [self setKeysForResponseString:dataStr];
+      }
 
 #if DEBUG
-    // Watch for token exchanges that return a non-bearer or unlabeled token
-    NSString *tokenType = [self tokenType];
-    if (tokenType == nil
-        || [tokenType caseInsensitiveCompare:@"bearer"] != NSOrderedSame) {
-      NSLog(@"GTMOAuth2: Unexpected token type: %@", tokenType);
-    }
+      // Watch for token exchanges that return a non-bearer or unlabeled token
+      NSString *tokenType = [self tokenType];
+      if (tokenType == nil
+          || [tokenType caseInsensitiveCompare:@"bearer"] != NSOrderedSame) {
+        NSLog(@"GTMOAuth2: Unexpected token type: %@", tokenType);
+      }
 #endif
+    }
   }
 
   id delegate = [fetcher propertyForKey:kTokenFetchDelegateKey];
@@ -964,7 +1003,6 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
 
 + (NSString *)encodedOAuthValueForString:(NSString *)str {
   CFStringRef originalString = (CFStringRef) str;
-
   CFStringRef leaveUnescaped = NULL;
   CFStringRef forceEscaped =  CFSTR("!*'();:@&=+$,/?%#[]");
 
@@ -1011,24 +1049,6 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
     [invocation setArgument:&obj3 atIndex:4];
     [invocation invoke];
   }
-}
-
-+ (NSString *)encodedOAuthParameterForString:(NSString *)str {
-  CFStringRef originalString = (CFStringRef) str;
-  CFStringRef leaveUnescaped = NULL;
-  CFStringRef forceEscaped =  CFSTR("!*'();:@&=+$,/?%#[]");
-
-  CFStringRef escapedStr = NULL;
-  if (str) {
-    escapedStr = CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault,
-                                                         originalString,
-                                                         leaveUnescaped,
-                                                         forceEscaped,
-                                                         kCFStringEncodingUTF8);
-    [(id)CFMakeCollectable(escapedStr) autorelease];
-  }
-
-  return (NSString *)escapedStr;
 }
 
 + (NSString *)unencodedOAuthParameterForString:(NSString *)str {
@@ -1097,4 +1117,4 @@ finishedRefreshWithFetcher:(GTMHTTPFetcher *)fetcher
 
 @end
 
-#endif // GTM_INCLUDE_OAUTH2 || (!GTL_REQUIRE_SERVICE_INCLUDES && !GDATA_REQUIRE_SERVICE_INCLUDES)
+#endif // GTM_INCLUDE_OAUTH2 || !GDATA_REQUIRE_SERVICE_INCLUDES

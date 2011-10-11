@@ -201,7 +201,7 @@ static NSString *const kDailyMotionClientSecretKey = @"DailyMotionClientSecret";
   // Remove the stored DailyMotion authentication from the keychain, if any
   [GTMOAuth2WindowController removeAuthFromKeychainForName:kDailyMotionKeychainItemName];
 
-  // Discard our retains authentication object
+  // Discard our retained authentication object
   [self setAuthentication:nil];
 
   [self updateUI];
@@ -229,12 +229,12 @@ static NSString *const kDailyMotionClientSecretKey = @"DailyMotionClientSecret";
 
   // Display the autentication sheet
   GTMOAuth2WindowController *windowController;
-  windowController = [[[GTMOAuth2WindowController alloc] initWithScope:scope
-                                                              clientID:clientID
-                                                          clientSecret:clientSecret
-                                                      keychainItemName:kKeychainItemName
-                                                         resourceBundle:nil] autorelease];
-
+  windowController = [GTMOAuth2WindowController controllerWithScope:scope
+                                                           clientID:clientID
+                                                       clientSecret:clientSecret
+                                                   keychainItemName:kKeychainItemName
+                                                     resourceBundle:nil];
+  
   // During display of the sign-in window, loss and regain of network
   // connectivity will be reported with the notifications
   // kGTMOAuth2NetworkLost/kGTMOAuth2NetworkFound
@@ -258,6 +258,16 @@ static NSString *const kDailyMotionClientSecretKey = @"DailyMotionClientSecret";
   // Most applications will not want the dialog to remember the signed-in user
   // across multiple sign-ins, but the sample app allows it.
   windowController.shouldPersistUser = [mPersistUserCheckbox state];
+
+  // By default, the controller will fetch the user's email, but not the rest of
+  // the user's profile.  The full profile can be requested from Google's server
+  // by setting this property before sign-in:
+  //
+  // windowController.signIn.shouldFetchGoogleUserProfile = YES;
+  //
+  // The profile will be available after sign-in as
+  //
+  //   NSDictionary *profile = windowController.signIn.userProfile;
 
   [windowController signInSheetModalForWindow:mMainWindow
                                      delegate:self
@@ -301,13 +311,13 @@ static NSString *const kDailyMotionClientSecretKey = @"DailyMotionClientSecret";
 
   // display the autentication sheet
   NSURL *authURL = [NSURL URLWithString:@"https://api.dailymotion.com/oauth/authorize?display=popup"];
-
+  
   GTMOAuth2WindowController *windowController;
-  windowController = [[[GTMOAuth2WindowController alloc] initWithAuthentication:auth
-                                                               authorizationURL:authURL
-                                                               keychainItemName:kDailyMotionKeychainItemName
-                                                                 resourceBundle:nil] autorelease];
-
+  windowController = [GTMOAuth2WindowController controllerWithAuthentication:auth
+                                                            authorizationURL:authURL
+                                                            keychainItemName:kDailyMotionKeychainItemName
+                                                              resourceBundle:nil];
+  
   // optional: display some html briefly before the sign-in page loads
   NSString *html = @"<html><body><div align=center>Loading sign-in page...</div></body></html>";
   [windowController setInitialHTMLString:html];

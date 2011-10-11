@@ -43,7 +43,7 @@
 // when explicitly canceled by calling cancelSigningIn
 //
 
-#if GTM_INCLUDE_OAUTH2 || (!GTL_REQUIRE_SERVICE_INCLUDES && !GDATA_REQUIRE_SERVICE_INCLUDES)
+#if GTM_INCLUDE_OAUTH2 || !GDATA_REQUIRE_SERVICE_INCLUDES
 
 #import <Foundation/Foundation.h>
 #import <SystemConfiguration/SystemConfiguration.h>
@@ -69,7 +69,11 @@
 
   GTMHTTPFetcher *pendingFetcher_;
 
-  BOOL shouldFetchGoogleUserInfo_;
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
+  BOOL shouldFetchGoogleUserEmail_;
+  BOOL shouldFetchGoogleUserProfile_;
+  NSDictionary *userProfile_;
+#endif
 
   SCNetworkReachabilityRef reachabilityRef_;
   NSTimer *networkLossTimer_;
@@ -91,7 +95,16 @@
 
 @property (nonatomic, retain) id userData;
 
-@property (nonatomic, assign) BOOL shouldFetchGoogleUserInfo;
+// By default, signing in to Google will fetch the user's email, but will not
+// fetch the user's profile.
+//
+// The email is saved in the auth object.
+// The profile is available immediately after sign-in.
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
+@property (nonatomic, assign) BOOL shouldFetchGoogleUserEmail;
+@property (nonatomic, assign) BOOL shouldFetchGoogleUserProfile;
+@property (nonatomic, retain, readonly) NSDictionary *userProfile;
+#endif
 
 // The default timeout for an unreachable network during display of the
 // sign-in page is 30 seconds; set this to 0 to have no timeout
@@ -107,9 +120,11 @@
             finishedSelector:(SEL)finishedSelector;
 
 // A default authentication object for signing in to Google services
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
 + (GTMOAuth2Authentication *)standardGoogleAuthenticationForScope:(NSString *)scope
                                                          clientID:(NSString *)clientID
                                                      clientSecret:(NSString *)clientSecret;
+#endif
 
 #pragma mark Methods used by the Window Controller
 
@@ -129,6 +144,7 @@
 
 - (BOOL)requestRedirectedToRequest:(NSURLRequest *)redirectedRequest;
 - (BOOL)titleChanged:(NSString *)title;
+- (BOOL)cookiesChanged:(NSHTTPCookieStorage *)cookieStorage;
 - (BOOL)loadFailedWithError:(NSError *)error;
 
 // Window controllers must tell the sign-in object if the window was closed
@@ -139,15 +155,19 @@
 #pragma mark -
 
 // Revocation of an authorized token from Google
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
 + (void)revokeTokenForGoogleAuthentication:(GTMOAuth2Authentication *)auth;
+#endif
 
 #pragma mark -
 
-// Standard values for authenticating to Google
+// Standard authentication values
++ (NSString *)nativeClientRedirectURI;
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
 + (NSURL *)googleAuthorizationURL;
 + (NSURL *)googleTokenURL;
-+ (NSString *)googleRedirectURI;
+#endif
 
 @end
 
-#endif // #if GTM_INCLUDE_OAUTH2 || (!GTL_REQUIRE_SERVICE_INCLUDES && !GDATA_REQUIRE_SERVICE_INCLUDES)
+#endif // #if GTM_INCLUDE_OAUTH2 || !GDATA_REQUIRE_SERVICE_INCLUDES

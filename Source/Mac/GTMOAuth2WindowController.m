@@ -15,7 +15,7 @@
 
 #import <Foundation/Foundation.h>
 
-#if GTM_INCLUDE_OAUTH2 || (!GTL_REQUIRE_SERVICE_INCLUDES && !GDATA_REQUIRE_SERVICE_INCLUDES)
+#if GTM_INCLUDE_OAUTH2 || !GDATA_REQUIRE_SERVICE_INCLUDES
 
 #if !TARGET_OS_IPHONE
 
@@ -63,22 +63,47 @@ const char *kKeychainAccountName = "OAuth";
             userData = userData_,
             properties = properties_;
 
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
+// Create a controller for authenticating to Google services
++ (id)controllerWithScope:(NSString *)scope
+                 clientID:(NSString *)clientID
+             clientSecret:(NSString *)clientSecret
+         keychainItemName:(NSString *)keychainItemName
+           resourceBundle:(NSBundle *)bundle {
+  return [[[self alloc] initWithScope:scope
+                             clientID:clientID
+                         clientSecret:clientSecret
+                     keychainItemName:keychainItemName
+                       resourceBundle:bundle] autorelease];
+}
+
 - (id)initWithScope:(NSString *)scope
            clientID:(NSString *)clientID
        clientSecret:(NSString *)clientSecret
    keychainItemName:(NSString *)keychainItemName
      resourceBundle:(NSBundle *)bundle {
-  // convenient entry point for Google authentication
-
+  Class signInClass = [[self class] signInClass];
   GTMOAuth2Authentication *auth;
-  auth = [GTMOAuth2SignIn standardGoogleAuthenticationForScope:scope
-                                                      clientID:clientID
-                                                  clientSecret:clientSecret];
-  NSURL *authorizationURL = [GTMOAuth2SignIn googleAuthorizationURL];
+  auth = [signInClass standardGoogleAuthenticationForScope:scope
+                                                  clientID:clientID
+                                              clientSecret:clientSecret];
+  NSURL *authorizationURL = [signInClass googleAuthorizationURL];
   return [self initWithAuthentication:auth
                      authorizationURL:authorizationURL
                      keychainItemName:keychainItemName
                        resourceBundle:bundle];
+}
+#endif
+
+// Create a controller for authenticating to any service
++ (id)controllerWithAuthentication:(GTMOAuth2Authentication *)auth
+                  authorizationURL:(NSURL *)authorizationURL
+                  keychainItemName:(NSString *)keychainItemName
+                    resourceBundle:(NSBundle *)bundle {
+ return [[[self alloc] initWithAuthentication:auth
+                             authorizationURL:authorizationURL
+                             keychainItemName:keychainItemName
+                               resourceBundle:bundle] autorelease];
 }
 
 - (id)initWithAuthentication:(GTMOAuth2Authentication *)auth
@@ -96,11 +121,12 @@ const char *kKeychainAccountName = "OAuth";
                                 owner:self];
   if (self != nil) {
     // use the supplied auth and OAuth endpoint URLs
-    signIn_ = [[GTMOAuth2SignIn alloc] initWithAuthentication:auth
-                                             authorizationURL:authorizationURL
-                                                     delegate:self
-                                           webRequestSelector:@selector(signIn:displayRequest:)
-                                             finishedSelector:@selector(signIn:finishedWithAuth:error:)];
+    Class signInClass = [[self class] signInClass];
+    signIn_ = [[signInClass alloc] initWithAuthentication:auth
+                                         authorizationURL:authorizationURL
+                                                 delegate:self
+                                       webRequestSelector:@selector(signIn:displayRequest:)
+                                         finishedSelector:@selector(signIn:finishedWithAuth:error:)];
     keychainItemName_ = [keychainItemName copy];
 
     // create local, temporary storage for WebKit cookies
@@ -166,6 +192,12 @@ const char *kKeychainAccountName = "OAuth";
     [[webView_ mainFrame] loadHTMLString:errHTML baseURL:nil];
     hideKeychainCheckbox = YES;
   }
+
+#if DEBUG
+  // Verify that Javascript is enabled
+  BOOL hasJS = [[webView_ preferences] isJavaScriptEnabled];
+  NSAssert(hasJS, @"GTMOAuth2: Javascript is required");
+#endif
 
   [keychainCheckbox_ setHidden:hideKeychainCheckbox];
 }
@@ -370,11 +402,26 @@ const char *kKeychainAccountName = "OAuth";
   }
 }
 
+static Class gSignInClass = Nil;
+
++ (Class)signInClass {
+  if (gSignInClass == Nil) {
+    gSignInClass = [GTMOAuth2SignIn class];
+  }
+  return gSignInClass;
+}
+
++ (void)setSignInClass:(Class)theClass {
+  gSignInClass = theClass;
+}
+
 #pragma mark Token Revocation
 
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
 + (void)revokeTokenForGoogleAuthentication:(GTMOAuth2Authentication *)auth {
-  [GTMOAuth2SignIn revokeTokenForGoogleAuthentication:auth];
+  [[self signInClass] revokeTokenForGoogleAuthentication:auth];
 }
+#endif
 
 #pragma mark WebView methods
 
@@ -404,6 +451,8 @@ const char *kKeychainAccountName = "OAuth";
   if ([title length] > 0) {
     [self.signIn titleChanged:title];
   }
+
+  [signIn_ cookiesChanged:(NSHTTPCookieStorage *)cookieStorage_];
 }
 
 - (void)webView:(WebView *)sender resource:(id)identifier didFailLoadingWithError:(NSError *)error fromDataSource:(WebDataSource *)dataSource {
@@ -411,7 +460,10 @@ const char *kKeychainAccountName = "OAuth";
 }
 
 - (void)windowWillClose:(NSNotification *)note {
-  [self handlePrematureWindowClose];
+  if (isWindowShown_) {
+    [self handlePrematureWindowClose];
+  }
+  isWindowShown_ = NO;
 }
 
 - (void)webView:(WebView *)webView
@@ -554,11 +606,13 @@ decisionListener:(id<WebPolicyDecisionListener>)listener {
   }
 }
 
+#if !GTM_OAUTH2_SKIP_GOOGLE_SUPPORT
 + (GTMOAuth2Authentication *)authForGoogleFromKeychainForName:(NSString *)keychainItemName
                                                      clientID:(NSString *)clientID
                                                  clientSecret:(NSString *)clientSecret {
-  NSURL *tokenURL = [GTMOAuth2SignIn googleTokenURL];
-  NSString *redirectURI = [GTMOAuth2SignIn googleRedirectURI];
+  Class signInClass = [self signInClass];
+  NSURL *tokenURL = [signInClass googleTokenURL];
+  NSString *redirectURI = [signInClass nativeClientRedirectURI];
 
   GTMOAuth2Authentication *auth;
   auth = [GTMOAuth2Authentication authenticationWithServiceProvider:kGTMOAuth2ServiceProviderGoogle
@@ -571,6 +625,7 @@ decisionListener:(id<WebPolicyDecisionListener>)listener {
                                            authentication:auth];
   return auth;
 }
+#endif
 
 + (BOOL)authorizeFromKeychainForName:(NSString *)keychainItemName
                       authentication:(GTMOAuth2Authentication *)newAuth {
@@ -663,4 +718,4 @@ decisionListener:(id<WebPolicyDecisionListener>)listener {
 
 #endif // #if !TARGET_OS_IPHONE
 
-#endif // #if GTM_INCLUDE_OAUTH2 || (!GTL_REQUIRE_SERVICE_INCLUDES && !GDATA_REQUIRE_SERVICE_INCLUDES)
+#endif // #if GTM_INCLUDE_OAUTH2 || !GDATA_REQUIRE_SERVICE_INCLUDES
